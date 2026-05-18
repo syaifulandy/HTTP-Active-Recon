@@ -64,7 +64,7 @@ crawl_target() {
     echo "[RUNNING] $DOMAIN"
 
     # ✅ KATANA FULL
-    katana -u "$URL" \
+    timeout 5m katana -u "$URL" \
         -d 5 \
         -jc \
         -jsl \
@@ -152,7 +152,6 @@ crawl_target() {
     > "$TARGET_DIR/highvalue.txt"
 
 
-
     # ✅ REQUEST LIST (BURP/FFUF READY) 🔥
     
     > "$TARGET_DIR/requests.txt"
@@ -163,7 +162,6 @@ crawl_target() {
     done < "$TARGET_DIR/urls.txt"
 
 
-
     # ✅ SENSITIVE DATA 🔥
 
     # ✅ base secret extraction (key + value)
@@ -171,7 +169,6 @@ crawl_target() {
     grep -rHoEi "(api[_-]?key|token|secret|password|jwt|bearer)[\"'\s:=]+[a-zA-Z0-9_\-\.=#:+/@$]{6,}" \
     "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
     > "$TARGET_DIR/secrets.txt"
-
 
     grep -rHoE "eyJ[a-zA-Z0-9_\-\.=]+" "$TARGET_DIR" 2>/dev/null \
      >> "$TARGET_DIR/secrets.txt"
