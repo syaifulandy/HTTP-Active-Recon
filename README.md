@@ -30,9 +30,9 @@ Automated web asset discovery & sensitive data hunter using Katana.
 
 ### Basic
 ```bash
-./credshunter_elite.sh -i targets.txt
+./credshunter.sh -i targets.txt
 ```
 ### Advanced
 ```bash
-./credshunter_elite.sh -i targets.txt -e exclude.txt
+./credshunter.sh -i targets.txt -e exclude.txt
 ```
