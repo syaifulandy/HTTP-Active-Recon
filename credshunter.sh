@@ -2,7 +2,7 @@
 
 INPUT_FILE="targets.txt"
 OUTPUT_DIR="output"
-THREADS=3
+THREADS=8
 
 # ✅ arg
 
