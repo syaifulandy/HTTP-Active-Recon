@@ -186,11 +186,11 @@ crawl_target() {
      -o "$TARGET_DIR/secrets.txt"
 
     echo "[DONE] $DOMAIN"
-    echo "  ├─ URLs        : $(wc -l < "$TARGET_DIR/urls.txt" 2>/dev/null || echo 0)"
-    echo "  ├─ params      : $(wc -l < "$TARGET_DIR/params.txt" 2>/dev/null || echo 0)"
-    echo "  ├─ endpoints   : $(wc -l < "$TARGET_DIR/endpoints.txt" 2>/dev/null || echo 0)"
-    echo "  ├─ highvalue   : $(wc -l < "$TARGET_DIR/highvalue.txt" 2>/dev/null || echo 0)"
-    echo "  ├─ files       : $COUNT"
+    echo "  URLs        : $(wc -l < "$TARGET_DIR/urls.txt" 2>/dev/null || echo 0)"
+    echo "  params      : $(wc -l < "$TARGET_DIR/params.txt" 2>/dev/null || echo 0)"
+    echo "  endpoints   : $(wc -l < "$TARGET_DIR/endpoints.txt" 2>/dev/null || echo 0)"
+    echo "  highvalue   : $(wc -l < "$TARGET_DIR/highvalue.txt" 2>/dev/null || echo 0)"
+    echo "  files       : $COUNT"
     echo "-----------------------------"
 
 }
