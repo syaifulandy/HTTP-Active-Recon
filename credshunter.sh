@@ -122,6 +122,12 @@ crawl_target() {
 
         if [[ "$link" =~ \.js($|\?) ]]; then
             EXT=".js"
+        elif [[ "$link" =~ \.map($|\?) ]]; then
+            EXT=".map"
+        elif [[ "$link" =~ \.json($|\?) ]]; then
+            EXT=".json"
+        elif [[ "$link" =~ \.(php|asp|aspx|jsp)($|\?) ]]; then
+            EXT=".html"
         else
             EXT=".html"
         fi
@@ -137,12 +143,11 @@ crawl_target() {
 
     # ✅ ENDPOINT PARSING (UPGRADED REGEX)
 
-    
-    grep -rhoE "(https?://[^\"' ]+|/[a-zA-Z0-9/_-]{3,})" "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
+    grep -rhoE "(https?://[^\"' ]+|/[a-zA-Z0-9/_\.-]+)" \
+    "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
     | grep -vE "\.(png|jpg|css|svg)" \
     | filter_exclude \
     | sort -u > "$TARGET_DIR/endpoints.txt"
-
 
 
     # ✅ HIGH VALUE 🔥
