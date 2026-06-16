@@ -34,5 +34,5 @@ Automated web asset discovery & sensitive data hunter using Katana.
 ```
 ### Advanced
 ```bash
-./credshunter.sh -i targets.txt -e exclude.txt
+./credshunter.sh -i targets.txt -e exclude.txt -c 'session=42'
 ```
