@@ -227,13 +227,24 @@ crawl_target() {
 
     done < "$TARGET_DIR/urls.txt"
 
-    # ✅ ENDPOINT PARSING (UPGRADED REGEX)
 
-    grep -rhoE "(https?://[^\"' ]+|/[a-zA-Z0-9/_\.-]+)" \
-    "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
+    # ✅ NORMAL ENDPOINT
+    grep -rhoE "(https?://[^\"' ]+|/[a-zA-Z0-9/_\.\-]+(\?[^\"' ]+)?)" \
+    "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null > "$TARGET_DIR/.ep1"
+
+    # ✅ JS FETCH / AJAX ENDPOINT
+    grep -rhoE "fetch\([^)]+|axios\.[a-z]+\([^)]+|\$.ajax\([^)]+\)" \
+    "$TARGET_DIR/files" 2>/dev/null \
+    | grep -oE "(https?://[^\"']+|/[a-zA-Z0-9/_\.\-]+(\?[^\"']+)?)" > "$TARGET_DIR/.ep2"
+
+    # ✅ MERGE SEMUA
+    cat "$TARGET_DIR/.ep1" "$TARGET_DIR/.ep2" \
     | grep -vE "\.(png|jpg|css|svg)" \
     | filter_exclude \
     | sort -u > "$TARGET_DIR/endpoints.txt"
+
+    rm -f "$TARGET_DIR/.ep1" "$TARGET_DIR/.ep2"
+
 
 
     # ✅ HIGH VALUE 🔥
@@ -277,6 +288,12 @@ crawl_target() {
     if [[ -s "$TARGET_DIR/secrets_raw.txt" ]]; then
         sort -u "$TARGET_DIR/secrets_raw.txt" -o "$TARGET_DIR/secrets_raw.txt"
     fi
+
+    # ✅ API HEADER EXTRACTION 🔥
+    grep -rHoEi "(api[_-]?key|api[_-]?id|authorization)['\" ]*[:=]['\" ]*[a-zA-Z0-9\-]{10,}" \
+    "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
+    >> "$TARGET_DIR/secrets_raw.txt"
+
 
 
     # ─── 2. FILTERING UNTUK LAPORAN UTAMA (BERSIH & TAJAM) ─────────────────
@@ -335,10 +352,44 @@ crawl_target() {
         fi
     done
 
+    # ✅ BUILD RAW REQUEST 🔥
+    echo "[BUILD] Generating API request templates for $DOMAIN"
+
+    > "$TARGET_DIR/api_requests.txt"
+
+    while read -r ep; do
+
+        [[ "$ep" != /* ]] && continue
+
+        # ❌ skip noise
+        [[ "$ep" =~ ^/\.$ ]] && continue
+        [[ "$ep" =~ ^/-$ ]] && continue
+        [[ "$ep" =~ ^/\.[a-z]+$ ]] && continue
+        [[ "$ep" =~ \.(js|css|png|jpg|svg|ico)$ ]] && continue
+
+
+        echo "GET $ep HTTP/1.1" >> "$TARGET_DIR/api_requests.txt"
+        echo "Host: $DOMAIN" >> "$TARGET_DIR/api_requests.txt"
+
+        # hanya inject kalau endpoint API
+        if echo "$ep" | grep -qiE "api|auth|login|token"; then
+            grep -E "(api[_-]?key|api[_-]?id)" "$TARGET_DIR/secrets.txt" 2>/dev/null | while read -r h; do
+                key=$(echo "$h" | sed 's/.*\(api[_-]*[a-z]*\)[\"'\'']*[:=].*/\1/I')
+                val=$(echo "$h" | sed 's/.*[:=][\"'\'']*//')
+                echo "$key: $val" >> "$TARGET_DIR/api_requests.txt"
+            done
+        fi
+
+
+        echo "" >> "$TARGET_DIR/api_requests.txt"
+    done < "$TARGET_DIR/endpoints.txt"
+
+
     # ─── 4. SUMMARY GENERATION & STATS ────────────────────────────────────
-    # Ambil total objek unik yang berhasil di-mining berdasarkan header penanda
-    STRUCT_COUNT=$(grep -c "=== Profile Struct" "$TARGET_DIR/identities.txt" 2>/dev/null || echo 0)
-    ROLE_COUNT=$(grep -c "=== Auth/Role Map" "$TARGET_DIR/roles_policy.txt" 2>/dev/null || echo 0)
+    # Ambil total objek unik yang berhasil di-mining berdasarkan header penanda    
+    STRUCT_COUNT=$(grep -c "=== Profile Struct" "$TARGET_DIR/identities.txt" 2>/dev/null || true)
+    ROLE_COUNT=$(grep -c "=== Auth/Role Map" "$TARGET_DIR/roles_policy.txt" 2>/dev/null || true)
+
 
     echo "[DONE] $DOMAIN"
     echo "  URLs        : $(wc -l < "$TARGET_DIR/urls.txt" 2>/dev/null || echo 0)"
