@@ -342,7 +342,7 @@ run_ffuf() {
   ffuf -w "$WORDLIST:FUZZ" \
        -u "$URL" \
        -t 150 \
-       -ic -ac -maxtime 300 \
+       -ic -ac -maxtime 1500 \
        -of csv -o "$TMP_RAW" \
        -H "User-Agent: $USER_AGENT" \
        2>&1 | tee -a "$TMP_LOG"
