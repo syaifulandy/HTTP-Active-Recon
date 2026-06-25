@@ -90,11 +90,32 @@ mkdir -p "$FFUF_RAW_DIR" "$FFUF_CLEAN_DIR" "$FFUF_LOG_DIR"
 # DNS RESOLVER
 #################################
 resolve_internet_ip() {
-  host="$1"
-  curl -s "https://cloudflare-dns.com/dns-query?name=${host}&type=A" \
-    -H "accept: application/dns-json" | jq -r '.Answer[].data' 2>/dev/null | head -n1
-}
+  local host="$1"
+  local ip=""
 
+  [[ ! "$host" =~ ^[a-zA-Z0-9.-]+$ ]] && return 1
+
+  # Cloudflare DoH
+  ip=$(curl -s \
+    --max-time 5 \
+    --connect-timeout 3 \
+    --retry 2 \
+    --retry-delay 1 \
+    --fail \
+    "https://cloudflare-dns.com/dns-query?name=${host}&type=A" \
+    -H "accept: application/dns-json" \
+    | jq -r '.Answer[]? | select(.type == 1) | .data' \
+    | head -n1)
+
+  # Fallback ke resolver lokal (internet + intranet)
+  if [[ -z "$ip" ]]; then
+    ip=$(dig +short A "$host" 2>/dev/null \
+      | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+      | head -n1)
+  fi
+
+  echo "$ip"
+}
 
 #################################
 # CLEAN FIELD
@@ -208,7 +229,7 @@ check_http() {
     echo "$url,http,$http_code,$title,$ssl_status,$redirect_info,http" | tee -a "$BULK_OUT"
 
     # ✅ TAMBAHAN: filter alive
-    if [[ "$http_code" =~ ^(200|301|302|403)$ ]]; then
+    if [[ "$http_code" != "000" ]]; then
       echo "$url" >> "$ALIVE_FILE"
     fi
 
