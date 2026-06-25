@@ -241,7 +241,7 @@ should_run_ffuf() {
   path=$(echo "$url" | sed -E 's#https?://[^/]+##')
   depth=$(echo "$path" | tr -cd '/' | wc -c)
 
-  [[ "$depth" -ge 2 ]] && return 1
+  [[ "$depth" -ge 5 ]] && return 1
   [[ "$url" =~ (login|logout|api|auth|signin|callback) ]] && return 1
 
   return 0
