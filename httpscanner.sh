@@ -353,11 +353,13 @@ run_ffuf() {
   fi
 
   #################################
-  # CLEANING -> FORMAT REFERENSI LU
+  # CLEANING -> FORMAT REFERENSI LU (FIXED)
   #################################
   echo "[FFUF] Cleaning output -> $TMP_CLEAN"
+  # Tambahkan baris ini untuk memastikan variabel mode terisi "path"
+  local mode="path"
 
-  awk -F',' -v OFS=',' '
+  awk -F',' -v OFS=',' -v mode="$mode" '
   function abs(x){ return x<0?-x:x }
 
   NR==1 {
@@ -379,13 +381,22 @@ run_ffuf() {
     display=url
     if (rloc == "") rloc="-"
 
-    # 1. Keep 403
+    # ========================================================
+    # FILTER DUPLIKAT ABSOLUT (Paling Atas!)
+    # Jika status, size, words, dan lines sama persis, langsung skip.
+    # ========================================================
+    exact_key = status "|" clen "|" words "|" lines
+    if (seen_exact[exact_key]++) {
+      next
+    }
+
+    # 1. Keep 403 (Penting buat Pentest)
     if (status == "403") {
       print display, status, clen, rloc, "DIRECT_403"
       next
     }
 
-    # 2. Redirect Grouping via CURL
+    # 2. Redirect Grouping via CURL + handling code 403 Forbidden (PENTING!)
     if (status ~ /^30[12378]$/) {
       cmd = "curl -k -s -L -o /dev/null --max-time 2 -w \"%{http_code}_%{size_download}\" \"" url "\""
       cmd | getline res
@@ -393,6 +404,13 @@ run_ffuf() {
 
       if (res == "") res = "TIMEOUT_0"
 
+      # PERBAIKAN: Jika hasil akhirnya ternyata 403, LANGSUNG LOLOSKAN tanpa grouping!
+      if (res ~ /^403_/) {
+        print display, status, clen, rloc, "FINAL_" res
+        next
+      }
+
+      # Sisa status lainnya (seperti berakhir di 200/404) tetap masuk ke logika grouping semula
       group_key = "REDIR_TO_" res
       if (!(seen[group_key]++)) {
         print display, status, clen, rloc, "FINAL_" res
