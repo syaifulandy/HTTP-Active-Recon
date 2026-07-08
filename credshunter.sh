@@ -77,6 +77,7 @@ export -f sanitize_filename
 
 
 crawl_target() {
+    THREADS=${THREADS:-8}
 
     URL=$1
     DOMAIN=$(echo $URL | sed 's|https\?://||' | cut -d/ -f1)    
@@ -630,7 +631,7 @@ crawl_target() {
     "$MASTER" > "$MASTER.tmp"
     mv "$MASTER.tmp" "$MASTER"
 
-    echo "method,url,status,size,words,lines,redirect" > "$RAWRESP"
+    echo "method|url|status|size|words|lines|redirect" > "$RAWRESP"
 
 
     TMPRESP="$TARGET_DIR/.responses.tmp"
@@ -638,13 +639,20 @@ crawl_target() {
 
     export TMPRESP
 
+    echo "[VALIDATE] Curl fingerprinting..."
+    echo "[DBG] THREADS=$THREADS"
+    echo "[DBG] MASTER_LINES=$(wc -l < "$MASTER")"
+
+
 
     echo "[VALIDATE] Curl fingerprinting..."
 
     
-    cat "$MASTER" |
-    
-    xargs -P "$THREADS" -d '\n' -I {} bash -c '
+
+    xargs -a "$MASTER" \
+    -P "$THREADS" \
+    -d '\n' \
+    -I {} bash -c '
 
     LINE="$1"
 
@@ -675,15 +683,19 @@ crawl_target() {
     WORDS=$(wc -w < "$TMPBODY" 2>/dev/null || echo 0)
     LINES=$(wc -l < "$TMPBODY" 2>/dev/null || echo 0)
 
-    echo "$METHOD|$URL|$STATUS|$SIZE|$WORDS|$LINES|$REDIR">> "$TMPRESP"
+    echo "$METHOD|$URL|$STATUS|$SIZE|$WORDS|$LINES|$REDIR" >> "$TMPRESP"
 
     rm -f "$TMPBODY"
 
     ' _ {}
 
 
+    
+    echo "[DBG] TMPRESP lines: $(wc -l < "$TMPRESP")"
+    head -5 "$TMPRESP"
+
     sort -u "$TMPRESP" >> "$RAWRESP"
-    rm -f "$TMPRESP"
+
 
 
     # ==========================================================
@@ -808,6 +820,7 @@ crawl_target() {
 
 export -f crawl_target
 export OUTPUT_DIR sanitize_filename
+export THREADS
 
 cat "$INPUT_FILE" | xargs -P $THREADS -I {} bash -c 'crawl_target "$@"' _ {}
 
