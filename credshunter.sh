@@ -108,15 +108,15 @@ crawl_target() {
     # 🚀 ENGINE 1: Standard Mode
     # Cetak debug command dengan memunculkan tanda kutip kuki secara visual agar siap copas
     if [[ -n "$COOKIE" ]]; then
-        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" -H \"Cookie: $COOKIE\" ${DNS_ARGS[@]}  -d 5 -jc -jsl -kf all -j -silent -ob -or"
+        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" -H \"Cookie: $COOKIE\" ${DNS_ARGS[@]}  -d 5 -jc -aff -jsl -kf all -j -silent -ob -or"
     else
-        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" ${DNS_ARGS[@]}  -d 5 -jc -jsl -kf all -j -silent -ob -or"
+        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" ${DNS_ARGS[@]}  -d 5 -jc -aff -jsl -kf all -j -silent -ob -or"
     fi
     timeout 3m katana -u "$URL" \
         "${KATANA_AUTH_ARGS[@]}" \
         "${DNS_ARGS[@]}" \
         -d 5 \
-        -jc \
+        -jc -aff \
         -jsl \
         -kf all \
         -j \
@@ -126,11 +126,11 @@ crawl_target() {
         > /dev/null 2>&1
 
     # 🚀 ENGINE 2: Headless Mode
-    echo "[DEBUG CMD] Engine 2 (Headless): katana -u \"$URL\" ${DNS_ARGS[@]} -ns -d 5 -jc -jsl -kf all -hl -xhr -system-chrome -system-chrome-path /usr/bin/chromium -no-sandbox -j -silent -ob -or"
+    echo "[DEBUG CMD] Engine 2 (Headless): katana -u \"$URL\" ${DNS_ARGS[@]} -ns -d 5 -jc -aff -jsl -kf all -hl -xhr -system-chrome -system-chrome-path /usr/bin/chromium -no-sandbox -j -silent -ob -or"
     timeout 3m katana -u "$URL" \
         "${DNS_ARGS[@]}" \
         -d 5 \
-        -jc \
+        -jc -aff \
         -jsl \
         -kf all \
         -hl \
