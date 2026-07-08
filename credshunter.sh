@@ -544,7 +544,7 @@ crawl_target() {
         while read -r ep; do
 
             [[ -z "$ep" ]] && continue
-            
+
             URLN=$(normalize_url "$ep")
 
             # skip junk js regex/minified snippets
@@ -607,9 +607,27 @@ crawl_target() {
     # --------------------------------------------------
     # deduplicate
     # --------------------------------------------------
+    
     sort -u "$MASTER" -o "$MASTER"
 
+    # hanya host target sendiri
+    grep -E "^([A-Z]+)\|https?://$DOMAIN([/:]|$)" \
+    "$MASTER" > "$MASTER.tmp"
+    mv "$MASTER.tmp" "$MASTER"
+
+    # skip asset statis
+    grep -viE '\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|otf|map)(\?|$)' \
+    "$MASTER" > "$MASTER.tmp"
+    mv "$MASTER.tmp" "$MASTER"
+
+
+    # skip obvious javascript/minified noise
+    grep -viE '(function\(|return\{|prototype|Math\.|parse:|NaN|rgba\?\\\(|\\d\\d)' \
+    "$MASTER" > "$MASTER.tmp"
+    mv "$MASTER.tmp" "$MASTER"
+
     echo "method,url,status,size,words,lines,redirect" > "$RAWRESP"
+
 
     TMPRESP="$TARGET_DIR/.responses.tmp"
     > "$TMPRESP"
