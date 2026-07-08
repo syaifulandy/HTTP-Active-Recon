@@ -522,9 +522,17 @@ crawl_target() {
 
             [[ -z "$ep" ]] && continue
 
+            
             URLN=$(normalize_url "$ep")
 
+            # skip junk js regex/minified snippets
+            echo "$URLN" | grep -qE '[{}<>"]' && continue
+
+            # terlalu panjang biasanya minified js
+            [[ ${#URLN} -gt 500 ]] && continue
+
             echo "GET|$URLN"
+
 
         done < "$TARGET_DIR/endpoints.txt" >> "$MASTER"
     fi
@@ -536,10 +544,17 @@ crawl_target() {
         while read -r ep; do
 
             [[ -z "$ep" ]] && continue
-
+            
             URLN=$(normalize_url "$ep")
 
+            # skip junk js regex/minified snippets
+            echo "$URLN" | grep -qE '[{}<>"]' && continue
+
+            # terlalu panjang biasanya minified js
+            [[ ${#URLN} -gt 500 ]] && continue
+
             echo "GET|$URLN"
+
 
         done < "$TARGET_DIR/highvalue.txt" >> "$MASTER"
     fi
