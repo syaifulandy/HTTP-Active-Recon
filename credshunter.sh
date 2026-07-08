@@ -237,6 +237,7 @@ crawl_target() {
 
     # FORM ACTION DISCOVERY
     echo "[FORM] Extracting forms from downloaded files"
+    > "$TARGET_DIR/form_actions.txt"
 
     
     grep -rhoEi '<form[^>]*>' "$TARGET_DIR/files" 2>/dev/null |
@@ -467,6 +468,277 @@ crawl_target() {
 
         echo "" >> "$TARGET_DIR/api_requests.txt"
     done < "$TARGET_DIR/endpoints.txt"
+
+    # ==========================================================
+    # RECON VALIDATION LAYER
+    # Tidak mengubah pipeline lama
+    # ==========================================================
+
+    echo "[VALIDATE] Building request inventory for $DOMAIN"
+
+    MASTER="$TARGET_DIR/requests_master.txt"
+    RAWRESP="$TARGET_DIR/responses_raw.csv"
+    CLEANRESP="$TARGET_DIR/responses_clean.csv"
+    ALIVE="$TARGET_DIR/alive_urls.txt"
+    INTERESTING="$TARGET_DIR/interesting.txt"
+
+    > "$MASTER"
+    > "$RAWRESP"
+    > "$CLEANRESP"
+    > "$ALIVE"
+    > "$INTERESTING"
+
+    normalize_url() {
+
+        local p="$1"
+
+        [[ -z "$p" ]] && return
+
+        if [[ "$p" =~ ^https?:// ]]; then
+            echo "$p"
+            return
+        fi
+
+        [[ "$p" != /* ]] && p="/$p"
+
+        echo "https://$DOMAIN$p"
+    }
+
+    # --------------------------------------------------
+    # urls.txt  -> GET
+    # --------------------------------------------------
+    if [[ -f "$TARGET_DIR/urls.txt" ]]; then
+        while read -r u; do
+            [[ -z "$u" ]] && continue
+            echo "GET|$u"
+        done < "$TARGET_DIR/urls.txt" >> "$MASTER"
+    fi
+
+    # --------------------------------------------------
+    # endpoints.txt -> GET
+    # --------------------------------------------------
+    if [[ -f "$TARGET_DIR/endpoints.txt" ]]; then
+        while read -r ep; do
+
+            [[ -z "$ep" ]] && continue
+
+            URLN=$(normalize_url "$ep")
+
+            echo "GET|$URLN"
+
+        done < "$TARGET_DIR/endpoints.txt" >> "$MASTER"
+    fi
+
+    # --------------------------------------------------
+    # highvalue.txt -> GET
+    # --------------------------------------------------
+    if [[ -f "$TARGET_DIR/highvalue.txt" ]]; then
+        while read -r ep; do
+
+            [[ -z "$ep" ]] && continue
+
+            URLN=$(normalize_url "$ep")
+
+            echo "GET|$URLN"
+
+        done < "$TARGET_DIR/highvalue.txt" >> "$MASTER"
+    fi
+
+    # --------------------------------------------------
+    # fuzz.txt -> GET
+    # --------------------------------------------------
+    if [[ -f "$TARGET_DIR/fuzz.txt" ]]; then
+        while read -r fu; do
+
+            [[ -z "$fu" ]] && continue
+
+            echo "GET|$fu"
+
+        done < "$TARGET_DIR/fuzz.txt" >> "$MASTER"
+    fi
+
+    # --------------------------------------------------
+    # endpoint_methods.txt
+    # --------------------------------------------------
+    if [[ -f "$TARGET_DIR/endpoint_methods.txt" ]]; then
+        while read -r METHOD PATHX; do
+
+            [[ -z "$METHOD" ]] && continue
+            [[ -z "$PATHX" ]] && continue
+
+            URLN=$(normalize_url "$PATHX")
+
+            echo "$METHOD|$URLN"
+
+        done < "$TARGET_DIR/endpoint_methods.txt" >> "$MASTER"
+    fi
+
+    # --------------------------------------------------
+    # form_actions.txt
+    # --------------------------------------------------
+    if [[ -f "$TARGET_DIR/form_actions.txt" ]]; then
+        while IFS='|' read -r METHOD ACTION; do
+
+            [[ -z "$METHOD" ]] && continue
+            [[ -z "$ACTION" ]] && continue
+
+            URLN=$(normalize_url "$ACTION")
+
+            echo "${METHOD^^}|$URLN"
+
+        done < "$TARGET_DIR/form_actions.txt" >> "$MASTER"
+    fi
+
+    # --------------------------------------------------
+    # deduplicate
+    # --------------------------------------------------
+    sort -u "$MASTER" -o "$MASTER"
+
+    echo "method,url,status,size,words,lines,redirect" > "$RAWRESP"
+
+    TMPRESP="$TARGET_DIR/.responses.tmp"
+    > "$TMPRESP"
+
+    export TMPRESP
+
+
+    echo "[VALIDATE] Curl fingerprinting..."
+
+    
+    cat "$MASTER" |
+    
+    xargs -P $((THREADS*4)) -d '\n' -I {} bash -c '
+
+    LINE="$1"
+
+    METHOD=$(echo "$LINE" | cut -d"|" -f1)
+    URL=$(echo "$LINE" | cut -d"|" -f2)
+
+    [[ -z "$URL" ]] && exit 0
+
+    TMPBODY=$(mktemp)
+
+    RESPONSE=$(curl -k \
+        -L \
+        -H "User-Agent: Mozilla/5.0" \
+        -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8" \
+        -H "Accept-Language: en-US,en;q=0.9" \
+        -X "$METHOD" \
+        --connect-timeout 1 \
+        --max-time 3 \
+        -s \
+        -o "$TMPBODY" \
+        -w "%{http_code}|%{size_download}|%{redirect_url}" \
+        "$URL")
+
+    STATUS=$(echo "$RESPONSE" | cut -d"|" -f1)
+    SIZE=$(echo "$RESPONSE" | cut -d"|" -f2)
+    REDIR=$(echo "$RESPONSE" | cut -d"|" -f3)
+
+    WORDS=$(wc -w < "$TMPBODY" 2>/dev/null || echo 0)
+    LINES=$(wc -l < "$TMPBODY" 2>/dev/null || echo 0)
+
+    echo "$METHOD,$URL,$STATUS,$SIZE,$WORDS,$LINES,$REDIR" >> "$TMPRESP"
+
+    rm -f "$TMPBODY"
+
+    ' _ {}
+
+
+    sort -u "$TMPRESP" >> "$RAWRESP"
+    rm -f "$TMPRESP"
+
+
+    # ==========================================================
+    # SMART DEDUP
+    # ==========================================================
+
+    awk -F',' '
+
+    BEGIN{
+        OFS=","
+        print "method,url,status,size,words,lines,redirect"
+    }
+
+    NR==1 { next }
+
+    {
+        method=$1
+        url=$2
+        status=$3
+        size=$4
+        words=$5
+        lines=$6
+        redir=$7
+
+        exact=status "|" size "|" words "|" lines
+
+        if (status=="403") {
+            print
+            next
+        }
+
+        if (status ~ /^30/) {
+
+            r="REDIR|" status "|" redir
+
+            if (!(seen[r]++))
+                print
+
+            next
+        }
+
+        if (status=="200") {
+
+            k=words "|" lines
+
+            if (!(seen200[k]++))
+                print
+
+            next
+        }
+
+        g=status "|" size
+
+        if (!(seen[g]++))
+            print
+    }
+
+    ' "$RAWRESP" > "$CLEANRESP"
+
+    # ==========================================================
+    # alive urls
+    # ==========================================================
+
+    awk -F',' '
+    NR>1 && ($3=="200" || $3=="401" || $3=="403")
+    {
+        print $2
+    }
+    ' "$CLEANRESP" \
+    | sort -u \
+    > "$ALIVE"
+
+    # ==========================================================
+    # interesting
+    # ==========================================================
+    awk -F',' '
+    NR>1 && ($3=="401" || $3=="403" || $3=="500" || $3 ~ /^30/)
+    {
+        print $3" "$1" "$2
+    }
+    ' "$CLEANRESP" \
+    > "$INTERESTING"
+
+
+    echo "[VALIDATE] requests : $(wc -l < "$MASTER" 2>/dev/null)"    
+    RESP_COUNT=$(wc -l < "$CLEANRESP" 2>/dev/null || echo 0)
+
+    [[ "$RESP_COUNT" -gt 0 ]] && RESP_COUNT=$((RESP_COUNT-1))
+
+    echo "[VALIDATE] responses: $RESP_COUNT"
+
+
 
 
     # ─── 4. SUMMARY GENERATION & STATS ────────────────────────────────────
