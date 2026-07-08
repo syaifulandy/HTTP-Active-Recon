@@ -133,7 +133,7 @@ crawl_target() {
         -jc -aff \
         -jsl \
         -kf all \
-        -hl \
+        -hl -pls domcontentloaded \
         -xhr \
         -system-chrome \
         -system-chrome-path /usr/bin/chromium \
