@@ -610,11 +610,6 @@ crawl_target() {
     
     sort -u "$MASTER" -o "$MASTER"
 
-    # hanya host target sendiri
-    grep -E "^([A-Z]+)\|https?://$DOMAIN([/:]|$)" \
-    "$MASTER" > "$MASTER.tmp"
-    mv "$MASTER.tmp" "$MASTER"
-
     # skip asset statis
     grep -viE '\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|otf|map)(\?|$)' \
     "$MASTER" > "$MASTER.tmp"
