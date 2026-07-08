@@ -22,3 +22,5 @@ apache.org
 stackoverflow.com
 iso.org
 gstatic.cn
+cloudflare.com
+jquery.org
