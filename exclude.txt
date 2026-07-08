@@ -17,3 +17,8 @@ mozilla.org
 w3.org
 opensource.org
 openxmlformats.org
+php.net
+apache.org
+stackoverflow.com
+iso.org
+gstatic.cn
