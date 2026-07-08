@@ -522,16 +522,21 @@ crawl_target() {
 
             [[ -z "$ep" ]] && continue
 
-            
             URLN=$(normalize_url "$ep")
 
-            # skip junk js regex/minified snippets
-            echo "$URLN" | grep -qE '[{}<>"]' && continue
+            # terlalu panjang = minified js
+            [[ ${#URLN} -gt 300 ]] && continue
 
-            # terlalu panjang biasanya minified js
-            [[ ${#URLN} -gt 500 ]] && continue
+            # regex/js junk
+            echo "$URLN" | grep -qE '[{}[\]\\]' && continue
+
+            # js syntax junk
+            echo "$URLN" | grep -qiE \
+            'function|return|prototype|Math\.|parse:|NaN|getUTC|rgba|centroid=' \
+            && continue
 
             echo "GET|$URLN"
+
 
 
         done < "$TARGET_DIR/endpoints.txt" >> "$MASTER"
@@ -547,14 +552,18 @@ crawl_target() {
 
             URLN=$(normalize_url "$ep")
 
-            # skip junk js regex/minified snippets
-            echo "$URLN" | grep -qE '[{}<>"]' && continue
+            # terlalu panjang = minified js
+            [[ ${#URLN} -gt 300 ]] && continue
 
-            # terlalu panjang biasanya minified js
-            [[ ${#URLN} -gt 500 ]] && continue
+            # regex/js junk
+            echo "$URLN" | grep -qE '[{}[\]\\]' && continue
+
+            # js syntax junk
+            echo "$URLN" | grep -qiE \
+            'function|return|prototype|Math\.|parse:|NaN|getUTC|rgba|centroid=' \
+            && continue
 
             echo "GET|$URLN"
-
 
         done < "$TARGET_DIR/highvalue.txt" >> "$MASTER"
     fi
@@ -635,7 +644,7 @@ crawl_target() {
     
     cat "$MASTER" |
     
-    xargs -P $((THREADS*4)) -d '\n' -I {} bash -c '
+    xargs -P "$THREADS" -d '\n' -I {} bash -c '
 
     LINE="$1"
 
@@ -666,7 +675,7 @@ crawl_target() {
     WORDS=$(wc -w < "$TMPBODY" 2>/dev/null || echo 0)
     LINES=$(wc -l < "$TMPBODY" 2>/dev/null || echo 0)
 
-    echo "$METHOD,$URL,$STATUS,$SIZE,$WORDS,$LINES,$REDIR" >> "$TMPRESP"
+    echo "$METHOD|$URL|$STATUS|$SIZE|$WORDS|$LINES|$REDIR">> "$TMPRESP"
 
     rm -f "$TMPBODY"
 
@@ -681,7 +690,7 @@ crawl_target() {
     # SMART DEDUP
     # ==========================================================
 
-    awk -F',' '
+    awk -F'|' '
 
     BEGIN{
         OFS=","
@@ -746,7 +755,7 @@ crawl_target() {
     # alive urls
     # ==========================================================
 
-    awk -F',' '
+    awk -F'|' '
     NR>1 && ($3=="200" || $3=="401" || $3=="403")
     {
         print $2
@@ -758,7 +767,7 @@ crawl_target() {
     # ==========================================================
     # interesting
     # ==========================================================
-    awk -F',' '
+    awk -F'|' '
     NR>1 && ($3=="401" || $3=="403" || $3=="500" || $3 ~ /^30/)
     {
         print $3" "$1" "$2
