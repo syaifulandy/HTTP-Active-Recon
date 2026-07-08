@@ -128,6 +128,7 @@ crawl_target() {
     # 🚀 ENGINE 2: Headless Mode
     echo "[DEBUG CMD] Engine 2 (Headless): katana -u \"$URL\" ${DNS_ARGS[@]} -ns -d 5 -jc -aff -jsl -kf all -hl -xhr -system-chrome -system-chrome-path /usr/bin/chromium -no-sandbox -j -silent -ob -or"
     timeout 3m katana -u "$URL" \
+        "${KATANA_AUTH_ARGS[@]}" \
         "${DNS_ARGS[@]}" \
         -d 5 \
         -jc -aff \
@@ -146,8 +147,12 @@ crawl_target() {
 
     # 🤝 PROSES MERGE & DE-DUPLICATE LEVEL JSON (Bebas Duplikat Struktural)
     echo "[MERGE] Combining Standard and Headless results for $DOMAIN"
-    cat "$FILE_STD" "$FILE_HL" 2>/dev/null \
-        | jq -c -s 'unique_by(.url, .request.endpoint)' \
+    cat "$FILE_STD" "$FILE_HL" \
+        | jq -c -s 'unique_by(
+            .request.method,
+            .request.endpoint,
+            (.request.body // "")
+        )' \
         | jq -c '.[]' \
         > "$FINAL_FILE" 2>/dev/null
 
@@ -164,25 +169,28 @@ crawl_target() {
     echo "[EXTRACT] $DOMAIN"
 
     # ✅ extract semua URL
-    
     jq -r '
-      .request.endpoint?,
-      .url?,
-      (.xhr[]?.url)
-    ' "$FILE" 2>/dev/null \
-    | grep -v '^null$' \
-    | sort -u \
-    | filter_exclude \
+    .request.endpoint
+    ' "$FILE" 2>/dev/null |
+    grep -v '^null$' |
+    sort -u |
+    filter_exclude \
     > "$TARGET_DIR/urls.txt"
 
-    # ✅ PARAMETER MINING 🔥
+
+
+    
+    
     grep -E "\?.*=" "$TARGET_DIR/urls.txt" \
-     | filter_exclude \
-     > "$TARGET_DIR/params.txt"
+    | filter_exclude \
+    > "$TARGET_DIR/params.txt"
 
     sed -E 's/\?.*/?FUZZ=1/' "$TARGET_DIR/params.txt" \
-     | filter_exclude \
-     | sort -u > "$TARGET_DIR/fuzz.txt"
+    | filter_exclude \
+    | sort -u \
+    > "$TARGET_DIR/fuzz.txt"
+
+
 
     echo "[PARAM] $(wc -l < "$TARGET_DIR/params.txt" 2>/dev/null || echo 0) param found"
 
@@ -227,6 +235,46 @@ crawl_target() {
 
     done < "$TARGET_DIR/urls.txt"
 
+    # FORM ACTION DISCOVERY
+    echo "[FORM] Extracting forms from downloaded files"
+
+    
+    grep -rhoEi '<form[^>]*>' "$TARGET_DIR/files" 2>/dev/null |
+    while read -r form; do
+
+        ACTION=$(echo "$form" |
+            grep -oiE 'action=["'\''][^"'\'']+' |
+            sed -E 's/action=["'\'']//I')
+
+        METHOD=$(echo "$form" |
+            grep -oiE 'method=["'\''][^"'\'']+' |
+            sed -E 's/method=["'\'']//I')
+
+        [[ -z "$METHOD" ]] && METHOD="GET"
+        [[ -z "$ACTION" ]] && continue
+
+        echo "${METHOD^^}|$ACTION"
+    done >> "$TARGET_DIR/form_actions.txt"
+
+    sort -u "$TARGET_DIR/urls.txt" -o "$TARGET_DIR/urls.txt"
+
+    
+    jq -r '
+    .request
+    | select(
+        .method != null and
+        .endpoint != null
+    )
+    | "\(.method) \(
+          .endpoint
+          | sub("^https?://[^/]+";"")
+          | if . == "" then "/" else . end
+      )"
+    ' "$FILE" |
+    sort -u \
+    > "$TARGET_DIR/endpoint_methods.txt"
+
+
 
     # ✅ NORMAL ENDPOINT
     grep -rhoE "(https?://[^\"' ]+|/[a-zA-Z0-9/_\.\-]+(\?[^\"' ]+)?)" \
@@ -239,29 +287,65 @@ crawl_target() {
 
     # ✅ MERGE SEMUA
     cat "$TARGET_DIR/.ep1" "$TARGET_DIR/.ep2" \
-    | grep -vE "\.(png|jpg|css|svg)" \
+    | grep -vE '^/(html|head|body|div|span|form|table|tbody|thead|tr|td|th|script|style|label|button|h1|h2|h3|h4|h5|h6|p|strong|i|a|ul|ol|li|input|select|option|textarea|nav|footer|header|main|section|article)$' \
+    | grep -vE '\.(png|jpg|css|svg)$' \
     | filter_exclude \
-    | sort -u > "$TARGET_DIR/endpoints.txt"
+    | sort -u \
+    > "$TARGET_DIR/endpoints.txt"
+
 
     rm -f "$TARGET_DIR/.ep1" "$TARGET_DIR/.ep2"
 
 
 
     # ✅ HIGH VALUE 🔥
-    
     grep -Ei "create|update|delete|admin|login|auth|debug|api" \
     "$TARGET_DIR/endpoints.txt" \
     > "$TARGET_DIR/highvalue.txt"
 
 
     # ✅ REQUEST LIST (BURP/FFUF READY) 🔥
-    
+   
     > "$TARGET_DIR/requests.txt"
 
-    while read -r url; do
-        echo "$url" | filter_exclude | grep -q . || continue
-        echo "GET $url" >> "$TARGET_DIR/requests.txt"
-    done < "$TARGET_DIR/urls.txt"
+    
+    jq -r '
+    .request
+    | select(
+        .method != null and
+        .endpoint != null
+    )
+    | [
+        .method,
+        (
+          .endpoint
+          | sub("^https?://[^/]+";"")
+          | if . == "" then "/" else . end
+        ),
+        (.body // "")
+      ]
+    | @tsv
+    ' "$FILE" |
+    sort -u |
+    while IFS=$'\t' read -r METHOD PATH BODY
+    do
+
+        echo "$METHOD $PATH HTTP/1.1"
+        echo "Host: $DOMAIN"
+
+        if [[ -n "$BODY" ]]; then
+            echo "Content-Type: application/json"
+            echo
+            echo "$BODY"
+        fi
+
+        echo
+        echo "################################"
+        echo
+
+    done > "$TARGET_DIR/requests.txt"
+
+
 
 
     # ✅ SENSITIVE DATA 🔥
@@ -312,7 +396,7 @@ crawl_target() {
     > "$TARGET_DIR/identities.txt"
     > "$TARGET_DIR/roles_policy.txt"
 
-    find "$TARGET_DIR/files" "$TARGET_DIR"/*.html -type f 2>/dev/null | while read -r file; do
+    find "$TARGET_DIR/files" -type f 2>/dev/null | while read -r file; do
         
         # Jalur 1: Mengendus Profil Pengguna (High Accuracy)
         grep -E "[\"'](username|email|user_id)[\"']\s*:" "$file" 2>/dev/null | while read -r raw_line; do
