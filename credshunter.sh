@@ -671,6 +671,14 @@ crawl_target() {
         lines=$6
         redir=$7
 
+        # skip noise / gagal resolve
+        if (status=="000")
+            next
+
+        # skip response kosong
+        if (size==0 && words==0 && lines==0)
+            next
+
         exact=status "|" size "|" words "|" lines
 
         if (status=="403") {
