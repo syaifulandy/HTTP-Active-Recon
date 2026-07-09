@@ -514,7 +514,7 @@ else
   -nh -ni -mhe 25 -duc -pt http"
 
   timeout "$NUCLEI_TIMEOUT" nuclei \
-    -s critical \
+    -s critical,high,medium \
     -l "$ALIVE_FILE" \
     -o "$NUCLEI_OUT" \
     -nh -ni -mhe 25 -duc -pt http \
