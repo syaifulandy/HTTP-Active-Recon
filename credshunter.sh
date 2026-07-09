@@ -420,8 +420,25 @@ crawl_target() {
 
     # ✅ SENSITIVE DATA 🔥
     # ─── 1. EKSTRAKSI AWAL (SERAKAH) ───────────────────────────────────────
-    # Menangkap semua kandidat termasuk format JSON blob dan parameter URL
+
+    # ✅ JS CONFIG / CONSTANT EXTRACTION
     > "$TARGET_DIR/secrets_raw.txt"
+
+    grep -rhoE '[A-Za-z0-9_$.-]+[[:space:]]*:[[:space:]]*"[^"]+"' \
+    "$TARGET_DIR/files" \
+    2>/dev/null \
+    | awk '!seen[$0]++' \
+    > "$TARGET_DIR/configs_raw.txt"
+
+
+    
+    grep -Ei \
+    '(api[_-]?key|apikey|secret|token|password|jwt|bearer|client[_-]?secret|access[_-]?token)' \
+    "$TARGET_DIR/configs_raw.txt" \
+    >> "$TARGET_DIR/secrets_raw.txt"
+
+
+    # Menangkap semua kandidat termasuk format JSON blob dan parameter URL
 
     grep -rHoEi "(api[_-]?key|token|secret|password|jwt|bearer)[\"'\s:=]+[a-zA-Z0-9_\-\.=#:+/@\${}\"']{3,}" \
     "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
@@ -438,17 +455,29 @@ crawl_target() {
     "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
     >> "$TARGET_DIR/secrets_raw.txt"
 
-    # Rapikan file RAW (urutkan dan hilangkan duplikat teks mentah)
-    if [[ -s "$TARGET_DIR/secrets_raw.txt" ]]; then
-        sort -u "$TARGET_DIR/secrets_raw.txt" -o "$TARGET_DIR/secrets_raw.txt"
-    fi
-
-    # ✅ API HEADER EXTRACTION 🔥
+     # ✅ API HEADER EXTRACTION 🔥
     grep -rHoEi "(api[_-]?key|api[_-]?id|authorization)['\" ]*[:=]['\" ]*[a-zA-Z0-9\-]{10,}" \
     "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
     >> "$TARGET_DIR/secrets_raw.txt"
 
+    # BARU SORT SEKALI DI PALING BAWAH
+    if [[ -s "$TARGET_DIR/secrets_raw.txt" ]]; then
+        sort -u "$TARGET_DIR/secrets_raw.txt" -o "$TARGET_DIR/secrets_raw.txt"
+    fi
+    
+    grep -vEi \
+    '(api[_-]?key|apikey|secret|token|password|jwt|bearer|client[_-]?secret|access[_-]?token|url|host|endpoint|api|base|gateway|proxy|auth|sso)' \
+    "$TARGET_DIR/configs_raw.txt" \
+    | sort -u \
+    > "$TARGET_DIR/configs.txt"
 
+
+
+    grep -Ei \
+    '(url|host|endpoint|api|base|gateway|proxy|auth|sso)' \
+    "$TARGET_DIR/configs_raw.txt" \
+    | sort -u \
+    > "$TARGET_DIR/interesting_configs.txt"
 
     # ─── 2. FILTERING UNTUK LAPORAN UTAMA (BERSIH & TAJAM) ─────────────────
     # Memisahkan data bersih ke file secrets.txt tanpa menghapus file RAW
@@ -919,6 +948,8 @@ crawl_target() {
     echo "  Profiles    : $STRUCT_COUNT JSON objects (High-Signal) 👤"
     echo "  Auth Maps   : $ROLE_COUNT JSON objects (Low-Signal/Roles) 🔑"
     echo "  secrets (HQ): $(wc -l < "$TARGET_DIR/secrets.txt" 2>/dev/null || echo 0)"
+    echo "  configs     : $(wc -l < "$TARGET_DIR/configs.txt" 2>/dev/null || echo 0)"
+    echo "  interesting : $(wc -l < "$TARGET_DIR/interesting_configs.txt" 2>/dev/null || echo 0)"
     echo "  secrets(RAW): $(wc -l < "$TARGET_DIR/secrets_raw.txt" 2>/dev/null || echo 0)"
     echo "  files       : $COUNT"
     echo "-----------------------------"
