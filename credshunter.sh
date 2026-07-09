@@ -169,6 +169,8 @@ crawl_target() {
 
     echo "[EXTRACT] $DOMAIN"
 
+
+
     # ✅ extract semua URL
     jq -r '
     .request.endpoint
@@ -297,7 +299,63 @@ crawl_target() {
 
 
     rm -f "$TARGET_DIR/.ep1" "$TARGET_DIR/.ep2"
+   
+    # ==========================================================
+    # FRAMEWORK DEBUG / ROUTE LEAK PROBE
+    # ==========================================================
 
+    echo "[DEBUG-PROBE] $DOMAIN"
+
+    DEBUG_ROUTES="$TARGET_DIR/debug_routes.txt"
+    DEBUG_LEAK="$TARGET_DIR/debug_leak_page.html"
+
+    > "$DEBUG_ROUTES"
+
+    TMPDEBUG=$(mktemp)
+
+    curl -k \
+        -L \
+        -s \
+        --connect-timeout 3 \
+        --max-time 5 \
+        -o "$TMPDEBUG" \
+        "https://$DOMAIN/__creds_hunter_not_found__"
+
+    if grep -qEi \
+    'DEBUG = True|Werkzeug|Whitelabel Error Page|Traceback|Ignition|Whoops|Server Error in |Cannot GET|Exception' \
+    "$TMPDEBUG"
+    then
+
+        echo "[DEBUG-LEAK] Framework error page exposed"
+
+        cp "$TMPDEBUG" "$DEBUG_LEAK"
+
+        sed -n '/<code>/,/<\/code>/p' "$TMPDEBUG" \
+        | grep -vE '<code>|</code>' \
+        | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+        | grep -Ei '^[a-zA-Z0-9_./-]+$' \
+        | grep '/' \
+        | sort -u \
+        > "$DEBUG_ROUTES"
+
+        echo "[DEBUG-LEAK] recovered $(wc -l < "$DEBUG_ROUTES") routes"
+
+    fi
+
+    if [[ -s "$DEBUG_ROUTES" ]]; then
+
+        while read -r ep
+        do
+            [[ "$ep" != /* ]] && ep="/$ep"
+            echo "$ep"
+        done < "$DEBUG_ROUTES"
+
+    fi >> "$TARGET_DIR/endpoints.txt"
+
+    sort -u "$TARGET_DIR/endpoints.txt" \
+    -o "$TARGET_DIR/endpoints.txt"
+
+    rm -f "$TMPDEBUG"
 
 
     # ✅ HIGH VALUE 🔥
