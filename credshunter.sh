@@ -369,12 +369,14 @@ crawl_target() {
     > "$TARGET_DIR/requests.txt"
 
     
+   
     jq -r '
     .request
     | select(
         .method != null and
         .endpoint != null
     )
+   
     | [
         .method,
         (
@@ -382,22 +384,30 @@ crawl_target() {
           | sub("^https?://[^/]+";"")
           | if . == "" then "/" else . end
         ),
+        (.headers["Content-Type"] // ""),
+        (.source // ""),
         (.body // "")
       ]
+
     | @tsv
     ' "$FILE" |
     sort -u |
-    while IFS=$'\t' read -r METHOD PATH BODY
+
+    while IFS=$'\t' read -r METHOD PATH CTYPE SOURCE BODY
+
     do
 
-        echo "$METHOD $PATH HTTP/1.1"
-        echo "Host: $DOMAIN"
+    [[ -n "$SOURCE" ]] && echo "# Source: $SOURCE"
+    echo "$METHOD $PATH HTTP/1.1"
+    echo "Host: $DOMAIN"
 
-        if [[ -n "$BODY" ]]; then
-            echo "Content-Type: application/json"
-            echo
-            echo "$BODY"
-        fi
+    [[ -n "$CTYPE" ]] && echo "Content-Type: $CTYPE"
+
+    if [[ -n "$BODY" ]]; then
+        echo
+        echo "$BODY"
+    fi
+
 
         echo
         echo "################################"
@@ -672,6 +682,30 @@ crawl_target() {
         done < "$TARGET_DIR/form_actions.txt" >> "$MASTER"
     fi
 
+
+    # --------------------------------------------------
+    # katana request replay (body + content-type)
+    # --------------------------------------------------
+    jq -r '
+    .request
+    | select(
+        .method != null and
+        .endpoint != null
+    )
+    | [
+        .method,
+        .endpoint,
+        (.headers["Content-Type"] // ""),
+        (.body // "")
+    ]
+    | @tsv
+    ' "$FILE" |
+    while IFS=$'\t' read -r METHOD URLN CTYPE BODY
+    do
+        echo "$METHOD|$URLN|$CTYPE|$BODY"
+    done >> "$MASTER"
+
+
     # --------------------------------------------------
     # deduplicate
     # --------------------------------------------------
@@ -716,17 +750,32 @@ crawl_target() {
 
     METHOD=$(echo "$LINE" | cut -d"|" -f1)
     URL=$(echo "$LINE" | cut -d"|" -f2)
+    CTYPE=$(echo "$LINE" | cut -d"|" -f3)
+    BODY=$(echo "$LINE" | cut -d"|" -f4-)
+
 
     [[ -z "$URL" ]] && exit 0
 
     TMPBODY=$(mktemp)
 
-    RESPONSE=$(curl -k \
-        -L \
-        -H "User-Agent: Mozilla/5.0" \
-        -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8" \
-        -H "Accept-Language: en-US,en;q=0.9" \
-        -X "$METHOD" \
+    
+    CURL_ARGS=(
+        -k
+        -L
+        -H "User-Agent: Mozilla/5.0"
+        -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8"
+        -H "Accept-Language: en-US,en;q=0.9"
+        -X "$METHOD"
+    )
+
+    [[ -n "$CTYPE" ]] && \
+    CURL_ARGS+=(-H "Content-Type: $CTYPE")
+
+    [[ -n "$BODY" ]] && \
+    CURL_ARGS+=(--data "$BODY")
+
+    RESPONSE=$(curl \
+        "${CURL_ARGS[@]}" \
         --connect-timeout 1 \
         --max-time 3 \
         -s \
