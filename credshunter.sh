@@ -741,6 +741,19 @@ crawl_target() {
 
     sort -u "$MASTER" -o "$MASTER"
 
+    # final exclude enforcement
+    if [[ -n "$EXCLUDE_REGEX" ]]; then
+        grep -Ev "$EXCLUDE_REGEX" "$MASTER" > "$MASTER.tmp"
+        mv "$MASTER.tmp" "$MASTER"
+    fi
+
+    grep -vEi \
+    '(\[\^|prototype|function\(|=>|\.concat\(|\.replace\(|\.split\(|\.push\(|\.slice\()' \
+    "$MASTER" > "$MASTER.tmp"
+
+    mv "$MASTER.tmp" "$MASTER"
+
+
     BEFORE=$(wc -l < "$MASTER")
 
     # skip static assets (berdasarkan field URL)
@@ -1012,7 +1025,8 @@ echo "[GLOBAL] merging responses"
 
 RESP_SUMMARY="$OUTPUT_DIR/ALL-RESPONSES.csv"
 
-echo "domain,method,url,status,size,words,lines,redirect" > "$RESP_SUMMARY"
+
+echo '"domain","method","url","status","size","words","lines","redirect"' > "$RESP_SUMMARY"
 
 find "$OUTPUT_DIR" -type f -name "responses_clean.csv" | while read -r file
 do
@@ -1021,7 +1035,19 @@ do
     tail -n +2 "$file" |
     while IFS='|' read -r METHOD URL STATUS SIZE WORDS LINES REDIR
     do
-        echo "$DOMAIN,$METHOD,$URL,$STATUS,$SIZE,$WORDS,$LINES,$REDIR"
+            
+        URL=$(echo "$URL" | sed 's/"/""/g')
+        REDIR=$(echo "$REDIR" | sed 's/"/""/g')
+
+        printf '"%s","%s","%s","%s","%s","%s","%s","%s"\n' \
+        "$DOMAIN" \
+        "$METHOD" \
+        "$URL" \
+        "$STATUS" \
+        "$SIZE" \
+        "$WORDS" \
+        "$LINES" \
+        "$REDIR"
     done
 
 done >> "$RESP_SUMMARY"
