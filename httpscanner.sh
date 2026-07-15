@@ -193,6 +193,28 @@ check_http() {
     fi
 
 
+    #################################
+    # RETRY ON FAILURE
+    #################################
+    if [[ "$http_code" == "000" ]]; then
+
+        sleep 1
+
+        curl_out=$(curl -4 -k \
+            --connect-timeout 5 \
+            --max-time 15 \
+            -s \
+            "${curl_extra[@]}" \
+            -D "$tmp_header" \
+            -o "$tmp_body" \
+            -w "%{http_code}|%{size_download}|%{remote_ip}|%{redirect_url}" \
+            -v "$url" 2>"$tmp_log")
+
+        curl_exit=$?
+
+        IFS="|" read -r http_code size_download remote_ip redirect_url <<< "$curl_out"
+    fi
+
     if [[ "$http_code" == "000" ]]; then
       rm -f "$tmp_body" "$tmp_header" "$tmp_log"
       echo "$url,$proto,000,-,-,FAILED,http" | tee -a "$BULK_OUT"
@@ -603,6 +625,5 @@ fi
 
 
 echo "[FINAL] FFUF merged -> $FFUF_FINAL"
-
 
 echo "✅ DONE -> $OUTPUT_DIR"
