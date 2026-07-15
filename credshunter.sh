@@ -4,6 +4,7 @@ INPUT_FILE="" # Dikosongkan untuk validasi wajib di getopts
 OUTPUT_DIR="output"
 THREADS=8
 COOKIE=""
+SCOPE_FILE=""
 
 # ✅ Fungsi Help Menu (Menggunakan kutip satu agar contoh lebih bersih tanpa backslash)
 usage() {
@@ -15,6 +16,7 @@ usage() {
   echo "  -e  Exclude list file (Regex pattern)"
   echo "  -c  Cookie string for authenticated crawling"
   echo "  -h  Show this help message"
+  echo "  -s  Scope file (allowed domains)"
   echo ""
   echo "Example:"
   # Diubah menggunakan kutip dua agar $0 terbaca dinamis, cookie dibungkus kutip satu (')
@@ -23,12 +25,13 @@ usage() {
 }
 
 # ✅ Update getopts untuk menerima flag -c dan -h
-while getopts "i:t:e:c:h" opt; do
+while getopts "i:t:e:c:s:h" opt; do
   case $opt in
     i) INPUT_FILE="$OPTARG" ;;
     t) THREADS="$OPTARG" ;;
     e) EXCLUDE_FILE="$OPTARG" ;;
     c) COOKIE="$OPTARG" ;;
+    s) SCOPE_FILE="$OPTARG" ;;
     h | *) usage ;;
   esac
 done
@@ -59,6 +62,21 @@ fi
 export EXCLUDE_REGEX
 export COOKIE # ✅ WAJIB diexport agar bisa dibaca fungsi crawl_target di dalam xargs
 
+SCOPE_REGEX=""
+
+if [[ -f "$SCOPE_FILE" ]]; then
+    echo "[INFO] loading scope list: $SCOPE_FILE"
+
+    SCOPE_REGEX=$(
+        sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$SCOPE_FILE" |
+        grep -v '^$' |
+        sed 's/\./\\./g' |
+        paste -sd'|' -
+    )
+
+fi
+
+export SCOPE_REGEX
 
 if [[ ! -f "$INPUT_FILE" ]]; then
   echo "[!] File tidak ditemukan: $INPUT_FILE"
@@ -106,16 +124,33 @@ crawl_target() {
         DNS_ARGS=("-r" "1.1.1.1,8.8.8.8")
     fi
 
+
+    KATANA_SCOPE_ARGS=()
+
+    if [[ -n "$SCOPE_REGEX" ]]; then
+        KATANA_SCOPE_REGEX="$SCOPE_REGEX"
+
+        KATANA_SCOPE_ARGS=(
+            -ns
+            -fs "($KATANA_SCOPE_REGEX)"
+        )
+
+        echo "[SCOPE] (${KATANA_SCOPE_REGEX})"
+    fi
+
+
     # 🚀 ENGINE 1: Standard Mode
     # Cetak debug command dengan memunculkan tanda kutip kuki secara visual agar siap copas
     if [[ -n "$COOKIE" ]]; then
-        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" -H \"Cookie: $COOKIE\" ${DNS_ARGS[@]}  -d 5 -jc -aff -jsl -kf all -j -silent -ob -or"
+        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" -H \"Cookie: $COOKIE\" ${DNS_ARGS[*]} ${KATANA_SCOPE_ARGS[*]} -d 5 -jc -aff -jsl -kf all -j -silent -ob -or"
     else
-        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" ${DNS_ARGS[@]}  -d 5 -jc -aff -jsl -kf all -j -silent -ob -or"
+        echo "[DEBUG CMD] Engine 1 (Standard): katana -u \"$URL\" ${DNS_ARGS[*]} ${KATANA_SCOPE_ARGS[*]} -d 5 -jc -aff -jsl -kf all -j -silent -ob -or"
     fi
+
     timeout 3m katana -u "$URL" \
         "${KATANA_AUTH_ARGS[@]}" \
         "${DNS_ARGS[@]}" \
+        "${KATANA_SCOPE_ARGS[@]}" \
         -d 5 \
         -jc -aff \
         -jsl \
@@ -127,10 +162,12 @@ crawl_target() {
         > /dev/null 2>&1
 
     # 🚀 ENGINE 2: Headless Mode
-    echo "[DEBUG CMD] Engine 2 (Headless): katana -u \"$URL\" ${DNS_ARGS[@]} -ns -d 5 -jc -aff -jsl -kf all -hl -xhr -system-chrome -system-chrome-path /usr/bin/chromium -no-sandbox -j -silent -ob -or"
+
+    echo "[DEBUG CMD] Engine 2 (Headless): katana -u \"$URL\" ${DNS_ARGS[*]} ${KATANA_SCOPE_ARGS[*]} -d 5 -jc -aff -jsl -kf all -hl -pls domcontentloaded -xhr -system-chrome -system-chrome-path /usr/bin/chromium -no-sandbox -j -silent -ob -or"
     timeout 3m katana -u "$URL" \
         "${KATANA_AUTH_ARGS[@]}" \
         "${DNS_ARGS[@]}" \
+        "${KATANA_SCOPE_ARGS[@]}" \
         -d 5 \
         -jc -aff \
         -jsl \
@@ -741,6 +778,44 @@ crawl_target() {
 
     sort -u "$MASTER" -o "$MASTER"
 
+    if [[ -n "$SCOPE_REGEX" ]]; then
+
+        awk -F'|' -v scopes="$SCOPE_REGEX" '
+        {
+            url=$2
+
+            if (url ~ /^https?:\/\//) {
+
+                host=url
+                sub(/^https?:\/\//,"",host)
+                sub(/\/.*/,"",host)
+
+                ok=0
+
+                n=split(scopes,a,"|")
+
+                for(i=1;i<=n;i++) {
+
+                    if(
+                        tolower(host)==tolower(a[i]) ||
+                        tolower(host) ~ ("\\."tolower(a[i])"$")
+                    ){
+                        ok=1
+                        break
+                    }
+                }
+
+                if(!ok)
+                    next
+            }
+
+            print
+        }
+        ' "$MASTER" > "$MASTER.tmp"
+
+        mv "$MASTER.tmp" "$MASTER"
+    fi
+
     # final exclude enforcement
     if [[ -n "$EXCLUDE_REGEX" ]]; then
         grep -Ev "$EXCLUDE_REGEX" "$MASTER" > "$MASTER.tmp"
@@ -1035,7 +1110,7 @@ do
     tail -n +2 "$file" |
     while IFS='|' read -r METHOD URL STATUS SIZE WORDS LINES REDIR
     do
-            
+
         URL=$(echo "$URL" | sed 's/"/""/g')
         REDIR=$(echo "$REDIR" | sed 's/"/""/g')
 
