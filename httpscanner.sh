@@ -131,7 +131,7 @@ clean_field() {
 
 check_http() {
   raw_url="$1"
-  echo "[HTTP] $raw_url"
+  echo "[HTTP CHECK] $raw_url"
 
   do_check() {
     local url="$1"
@@ -144,29 +144,58 @@ check_http() {
     url=$(echo "$url" | tr -d '\r' | xargs)
     host=$(echo "$url" | sed -E 's#https?://##' | cut -d/ -f1)
 
-    curl_extra=""
+
+
+    local ip
+    local -a curl_extra=()
+
     if $INTERNET_MODE && [[ "$proto" == "https" ]]; then
-      ip=$(resolve_internet_ip "$host")
-      [[ -n "$ip" ]] && curl_extra="--resolve $host:443:$ip"
+        ip=$(resolve_internet_ip "$host")
+
+        if [[ -n "$ip" ]]; then
+            curl_extra=(--resolve "$host:443:$ip")
+        fi
     fi
-
     
-    echo "[HTTP] Running command:"
-    echo "curl -4 -k --max-time 20 -s $curl_extra -D \"$tmp_header\" -o \"$tmp_body\" -w \"%{http_code}|%{size_download}|%{remote_ip}|%{url_effective}\" -v \"$url\""
-
-    
-    curl_out=$(curl -4 -k --max-time 20 -s \
-      $curl_extra \
+    curl_out=$(curl -4 -k --max-time 15 --connect-timeout 5 -s \
+      "${curl_extra[@]}" \
       -D "$tmp_header" \
       -o "$tmp_body" \
       -w "%{http_code}|%{size_download}|%{remote_ip}|%{redirect_url}" \
       -v "$url" 2> "$tmp_log")
-
+    curl_exit=$?
     IFS="|" read -r http_code size_download remote_ip redirect_url <<< "$curl_out"
+
+
+    if $INTERNET_MODE \
+       && [[ "$http_code" == "000" ]] \
+       && [[ "$curl_exit" =~ ^(6|7|28)$ ]] \
+       && [[ ${#curl_extra[@]} -gt 0 ]]; then
+
+        echo "FALLBACK_LOCAL_DNS: $url" >> /tmp/url_debug.log
+
+        curl_out=$(curl -4 -k \
+            --connect-timeout 5 \
+            --max-time 20 \
+            -s \
+            -D "$tmp_header" \
+            -o "$tmp_body" \
+            -w "%{http_code}|%{size_download}|%{remote_ip}|%{redirect_url}" \
+            -v "$url" 2>"$tmp_log")
+
+        curl_exit=$?
+
+        IFS="|" read -r http_code size_download remote_ip redirect_url <<< "$curl_out"
+
+        if [[ "$http_code" != "000" ]]; then
+            echo "FALLBACK_LOCAL_DNS_SUCCESS: $url" >> /tmp/url_debug.log
+        fi
+    fi
+
 
     if [[ "$http_code" == "000" ]]; then
       rm -f "$tmp_body" "$tmp_header" "$tmp_log"
-      echo "$url,http,000,-,-,FAILED,http" | tee -a "$BULK_OUT"
+      echo "$url,$proto,000,-,-,FAILED,http" | tee -a "$BULK_OUT"
 
       return 1
     fi
@@ -225,8 +254,7 @@ check_http() {
     #################################
     # FINAL OUTPUT (PIPELINE FORMAT)
     #################################
-    
-    echo "$url,http,$http_code,$title,$ssl_status,$redirect_info,http" | tee -a "$BULK_OUT"
+    echo "$url,$proto,$http_code,$title,$ssl_status,$redirect_info,http" | tee -a "$BULK_OUT"
 
     # ✅ TAMBAHAN: filter alive
     if [[ "$http_code" != "000" ]]; then
@@ -237,13 +265,22 @@ check_http() {
     return 0
   }
 
-  if [[ "$raw_url" =~ ^https?:// ]]; then
-    proto=$(echo "$raw_url" | cut -d':' -f1)
-    do_check "$raw_url" "$proto"
+  if [[ "$raw_url" =~ ^https:// ]]; then
+
+      do_check "$raw_url" "https"
+
+  elif [[ "$raw_url" =~ ^http:// ]]; then
+
+      do_check "$raw_url" "http" || \
+      do_check "${raw_url/http:\/\//https://}" "https"
+
   else
-    do_check "https://$raw_url" "https" || \
-    do_check "http://$raw_url" "http"
+
+      do_check "https://$raw_url" "https" || \
+      do_check "http://$raw_url" "http"
+
   fi
+
 }
 
 
@@ -331,7 +368,6 @@ run_ffuf() {
   #################################
   # RUN FFUF
   #################################
-  echo "[FFUF] Running command:"
   echo " -w \"$WORDLIST:FUZZ\" \
 -u \"$URL\" \
 -t 150 \
