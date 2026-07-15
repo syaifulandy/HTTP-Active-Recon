@@ -738,19 +738,27 @@ crawl_target() {
     # --------------------------------------------------
     # deduplicate
     # --------------------------------------------------
-    
+
     sort -u "$MASTER" -o "$MASTER"
 
-    # skip asset statis
-    grep -viE '\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|otf|map)(\?|$)' \
-    "$MASTER" > "$MASTER.tmp"
-    mv "$MASTER.tmp" "$MASTER"
+    BEFORE=$(wc -l < "$MASTER")
 
+    # skip static assets (berdasarkan field URL)
+    awk -F'|' '
+        tolower($2) !~ /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|otf|map)([?#]|[^[:alnum:]]|$)/
+    ' "$MASTER" > "$MASTER.tmp"
+
+    mv "$MASTER.tmp" "$MASTER"
 
     # skip obvious javascript/minified noise
     grep -viE '(function\(|return\{|prototype|Math\.|parse:|NaN|rgba\?\\\(|\\d\\d)' \
     "$MASTER" > "$MASTER.tmp"
+
     mv "$MASTER.tmp" "$MASTER"
+
+    AFTER=$(wc -l < "$MASTER")
+
+    echo "[FILTER] removed $((BEFORE-AFTER)) static assets"
 
     echo "method|url|status|size|words|lines|redirect" > "$RAWRESP"
 
@@ -999,6 +1007,37 @@ END {
 > "$OUTPUT_DIR/ALL-SECRETS-GROUPED.txt"
 
 echo "[GLOBAL] grouped output: ALL-SECRETS-GROUPED.txt"
+
+echo "[GLOBAL] merging responses"
+
+RESP_SUMMARY="$OUTPUT_DIR/ALL-RESPONSES.csv"
+
+echo "domain,method,url,status,size,words,lines,redirect" > "$RESP_SUMMARY"
+
+find "$OUTPUT_DIR" -type f -name "responses_clean.csv" | while read -r file
+do
+    DOMAIN=$(basename "$(dirname "$file")")
+
+    tail -n +2 "$file" |
+    while IFS='|' read -r METHOD URL STATUS SIZE WORDS LINES REDIR
+    do
+        echo "$DOMAIN,$METHOD,$URL,$STATUS,$SIZE,$WORDS,$LINES,$REDIR"
+    done
+
+done >> "$RESP_SUMMARY"
+
+#Resume Status Code Global
+awk -F',' '
+NR>1{
+    c[$4]++
+}
+END{
+    print "=== STATUS SUMMARY ==="
+    for(i in c)
+        print i " => " c[i]
+}
+' "$RESP_SUMMARY" \
+> "$OUTPUT_DIR/RESPONSE-STATS.txt"
 
 
 echo "[✓] DONE - HUNT READY"
