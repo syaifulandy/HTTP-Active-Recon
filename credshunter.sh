@@ -52,6 +52,60 @@ filter_exclude() {
 
 export -f filter_exclude
 
+
+scope_filter() {
+
+    if [[ -n "$SCOPE_REGEX" ]]; then
+
+        awk -v scopes="$SCOPE_REGEX" '
+        {
+            host=$0
+
+            sub(/^https?:\/\//,"",host)
+            sub(/\/.*/,"",host)
+            sub(/:.*/,"",host)
+
+            ok=0
+
+            n=split(scopes,a,"|")
+            
+            for(i=1;i<=n;i++) {
+
+                scope=tolower(a[i])
+
+                # exact match
+                if (tolower(host)==scope) {
+                    ok=1
+                    break
+                }
+
+            
+                # IP prefix scope only
+                if (scope ~ /^[0-9.]+$/ &&
+                    index(host, scope)==1) {
+                    ok=1
+                    break
+                }
+
+                suffix="." scope
+
+                if (length(host) > length(suffix) && substr(tolower(host), length(host)-length(suffix)+1) == suffix) {
+                    ok=1
+                    break
+                }
+            }
+
+
+            if(ok)
+                print
+        }'
+
+    else
+        cat
+    fi
+}
+export -f scope_filter
+
 EXCLUDE_REGEX=""
 
 if [[ -f "$EXCLUDE_FILE" ]]; then
@@ -70,13 +124,37 @@ if [[ -f "$SCOPE_FILE" ]]; then
     SCOPE_REGEX=$(
         sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$SCOPE_FILE" |
         grep -v '^$' |
-        sed 's/\./\\./g' |
         paste -sd'|' -
     )
+
 
 fi
 
 export SCOPE_REGEX
+
+
+
+MAX_RECORD_LEN=5000
+
+clean_records() {
+    awk -v max="$MAX_RECORD_LEN" '
+    length($0) > 0 &&
+    length($0) <= max &&
+    $0 !~ /^data:/ &&
+    $0 !~ /data:image\// &&
+    $0 !~ /base64,/ &&
+    $0 !~ /xlinkHref:[[:space:]]*"data:image/ &&
+    $0 !~ /^d:[[:space:]]*"M[0-9]/ &&
+    $0 !~ /^d:[[:space:]]*"m[0-9]/ &&
+    $0 !~ /^[[:space:]]*M[0-9.-]+[[:space:]][0-9.-]+/
+    '
+}
+
+export -f clean_records
+
+export MAX_RECORD_LEN
+
+
 
 if [[ ! -f "$INPUT_FILE" ]]; then
   echo "[!] File tidak ditemukan: $INPUT_FILE"
@@ -127,15 +205,18 @@ crawl_target() {
 
     KATANA_SCOPE_ARGS=()
 
-    if [[ -n "$SCOPE_REGEX" ]]; then
-        KATANA_SCOPE_REGEX="$SCOPE_REGEX"
+    if [[ -n "$SCOPE_REGEX" ]]; then        
+        KATANA_SCOPE_REGEX=$(
+            echo "$SCOPE_REGEX" |
+            sed 's/\./\\./g'
+        )
+
 
         KATANA_SCOPE_ARGS=(
             -ns
-            -fs "($KATANA_SCOPE_REGEX)"
+            -fs "$KATANA_SCOPE_REGEX"
         )
-
-        echo "[SCOPE] (${KATANA_SCOPE_REGEX})"
+        echo "[SCOPE] $KATANA_SCOPE_REGEX"
     fi
 
 
@@ -150,7 +231,6 @@ crawl_target() {
     timeout 3m katana -u "$URL" \
         "${KATANA_AUTH_ARGS[@]}" \
         "${DNS_ARGS[@]}" \
-        "${KATANA_SCOPE_ARGS[@]}" \
         -d 5 \
         -jc -aff \
         -jsl \
@@ -167,7 +247,6 @@ crawl_target() {
     timeout 3m katana -u "$URL" \
         "${KATANA_AUTH_ARGS[@]}" \
         "${DNS_ARGS[@]}" \
-        "${KATANA_SCOPE_ARGS[@]}" \
         -d 5 \
         -jc -aff \
         -jsl \
@@ -183,29 +262,61 @@ crawl_target() {
         -o "$FILE_HL" \
         > /dev/null 2>&1
 
-    # 🤝 PROSES MERGE & DE-DUPLICATE LEVEL JSON (Bebas Duplikat Struktural)
+ 
+    echo "[MERGE] std=$(wc -l < "$FILE_STD" 2>/dev/null || echo 0)"
+    echo "[MERGE] hl=$(wc -l < "$FILE_HL" 2>/dev/null || echo 0)"
+
+    # 🤝 PROSES MERGE & DE-DUPLICATE LEVEL JSON
     echo "[MERGE] Combining Standard and Headless results for $DOMAIN"
-    cat "$FILE_STD" "$FILE_HL" \
-        | jq -c -s 'unique_by(
-            .request.method,
-            .request.endpoint,
-            (.request.body // "")
-        )' \
-        | jq -c '.[]' \
-        > "$FINAL_FILE" 2>/dev/null
 
-    # Bersihkan file sampah instansi agar disk lab tidak penuh
-    rm -f "$FILE_STD" "$FILE_HL"
+    > "$FINAL_FILE"
 
+    for f in "$FILE_STD" "$FILE_HL"
+    do
+        [[ ! -s "$f" ]] && continue
+
+        # biasanya timeout/Killed merusak baris terakhir JSONL
+        sed '$d' "$f" |
+        jq -c . 2>/dev/null
+    done |
+    sort -u \
+    > "$FINAL_FILE"
+
+    RECORDS=$(wc -l < "$FINAL_FILE" 2>/dev/null || echo 0)
+
+    echo "[MERGE] records=$RECORDS"
+
+    if [[ "$RECORDS" -eq 0 ]]; then
+        echo "[WARN] merge failed, fallback to raw output"
+
+        if [[ -s "$FILE_STD" ]]; then
+            cp "$FILE_STD" "$FINAL_FILE"
+        elif [[ -s "$FILE_HL" ]]; then
+            cp "$FILE_HL" "$FINAL_FILE"
+        fi
+
+        RECORDS=$(wc -l < "$FINAL_FILE" 2>/dev/null || echo 0)
+        echo "[MERGE] fallback records=$RECORDS"
+    fi
+
+    if [[ "$RECORDS" -gt 0 ]]; then
+        rm -f "$FILE_STD" "$FILE_HL"
+    else
+        echo "[ERROR] no usable katana records recovered"
+        echo "[WARN] keeping raw katana files"
+    fi
     # Alihkan variabel asal ke file final yang sudah bersih
     FILE="$FINAL_FILE"
 
-
+    # stop pipeline kalau katana output kosong
+    if [[ ! -s "$FILE" ]]; then
+        echo "[ERROR] Empty Katana output, skipping $DOMAIN"
+        return
+    fi
     
     mkdir -p "$OUTPUT_DIR/$DOMAIN"
 
     echo "[EXTRACT] $DOMAIN"
-
 
 
     # ✅ extract semua URL
@@ -214,12 +325,10 @@ crawl_target() {
     ' "$FILE" 2>/dev/null |
     grep -v '^null$' |
     sort -u |
+    scope_filter |
     filter_exclude \
     > "$TARGET_DIR/urls.txt"
 
-
-
-    
     
     grep -E "\?.*=" "$TARGET_DIR/urls.txt" \
     | filter_exclude \
@@ -238,6 +347,7 @@ crawl_target() {
     echo "[DOWNLOAD] $DOMAIN"
 
     COUNT=0
+    > "$TARGET_DIR/large_files.txt"
 
     # ✅ Buat argumen dinamis Curl
     CURL_AUTH_ARGS=()
@@ -262,6 +372,23 @@ crawl_target() {
             EXT=".html"
         else
             EXT=".html"
+        fi
+
+        SIZE=$(curl \
+            "${CURL_AUTH_ARGS[@]}" \
+            -k -sIL "$link" |
+            grep -i '^Content-Length:' |
+            tail -1 |
+            awk '{print $2}' |
+            tr -d '\r')
+
+        MAX_SIZE=104857600
+
+        if [[ "$SIZE" =~ ^[0-9]+$ ]] &&
+           [[ "$SIZE" -gt "$MAX_SIZE" ]]
+        then
+            echo "$link|$SIZE" >> "$TARGET_DIR/large_files.txt"
+            continue
         fi
 
         # ✅ Sisipkan ${CURL_AUTH_ARGS[@]} pada pengecekan status code
@@ -328,6 +455,7 @@ crawl_target() {
 
     # ✅ MERGE SEMUA
     cat "$TARGET_DIR/.ep1" "$TARGET_DIR/.ep2" \
+    | awk 'length($0)<=5000' \
     | grep -vE '^/(html|head|body|div|span|form|table|tbody|thead|tr|td|th|script|style|label|button|h1|h2|h3|h4|h5|h6|p|strong|i|a|ul|ol|li|input|select|option|textarea|nav|footer|header|main|section|article)$' \
     | grep -vE '\.(png|jpg|css|svg)$' \
     | filter_exclude \
@@ -461,16 +589,25 @@ crawl_target() {
     # ✅ JS CONFIG / CONSTANT EXTRACTION
     > "$TARGET_DIR/secrets_raw.txt"
 
-    grep -rhoE '[A-Za-z0-9_$.-]+[[:space:]]*:[[:space:]]*"[^"]+"' \
-    "$TARGET_DIR/files" \
-    2>/dev/null \
-    | awk '!seen[$0]++' \
+    
+    {
+        grep -rhoE '[A-Za-z0-9_$.-]+[[:space:]]*:[[:space:]]*"[^"]+"' \
+        "$TARGET_DIR/files" 2>/dev/null
+
+        grep -rhoE '(const|let|var)[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*"[^"]+"' \
+        "$TARGET_DIR/files" 2>/dev/null
+
+        grep -rhoE '[A-Z][A-Z0-9_]{3,}[[:space:]]*=[[:space:]]*"[^"]+"' \
+        "$TARGET_DIR/files" 2>/dev/null
+    } |
+    clean_records |
+    sort -u \
     > "$TARGET_DIR/configs_raw.txt"
 
 
     
     grep -Ei \
-    '(api[_-]?key|apikey|secret|token|password|jwt|bearer|client[_-]?secret|access[_-]?token)' \
+    '(api[_-]?key|apikey|secret|token|password|jwt|bearer|username|user|client[_-]?id|clientid|email)' \
     "$TARGET_DIR/configs_raw.txt" \
     >> "$TARGET_DIR/secrets_raw.txt"
 
@@ -485,8 +622,18 @@ crawl_target() {
     "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
     >> "$TARGET_DIR/secrets_raw.txt"
 
-    grep -rHoE "eyJ[a-zA-Z0-9_\-\.=]+" "$TARGET_DIR" 2>/dev/null \
+
+    grep -rHoE \
+    'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' \
+    "$TARGET_DIR" 2>/dev/null |
+    awk '
+    length($0)>=50 &&
+    length($0)<=2000 &&
+    gsub(/\./,"&")==2
+    ' |
+    sort -u \
     >> "$TARGET_DIR/secrets_raw.txt"
+
 
     grep -rHoEi "Authorization[\"' :]+Bearer[ ]+[^\"'[:space:]]+" \
     "$TARGET_DIR/files" "$TARGET_DIR"/*.html 2>/dev/null \
@@ -498,13 +645,20 @@ crawl_target() {
     >> "$TARGET_DIR/secrets_raw.txt"
 
     # BARU SORT SEKALI DI PALING BAWAH
-    if [[ -s "$TARGET_DIR/secrets_raw.txt" ]]; then
-        sort -u "$TARGET_DIR/secrets_raw.txt" -o "$TARGET_DIR/secrets_raw.txt"
-    fi
     
+    if [[ -s "$TARGET_DIR/secrets_raw.txt" ]]; then
+        clean_records < "$TARGET_DIR/secrets_raw.txt" \
+        | sort -u \
+        > "$TARGET_DIR/secrets_raw.tmp"
+
+        mv "$TARGET_DIR/secrets_raw.tmp" \
+           "$TARGET_DIR/secrets_raw.txt"
+    fi
+
     grep -vEi \
     '(api[_-]?key|apikey|secret|token|password|jwt|bearer|client[_-]?secret|access[_-]?token|url|host|endpoint|api|base|gateway|proxy|auth|sso)' \
     "$TARGET_DIR/configs_raw.txt" \
+    | clean_records \
     | sort -u \
     > "$TARGET_DIR/configs.txt"
 
@@ -513,6 +667,7 @@ crawl_target() {
     grep -Ei \
     '(url|host|endpoint|api|base|gateway|proxy|auth|sso)' \
     "$TARGET_DIR/configs_raw.txt" \
+    | clean_records \
     | sort -u \
     > "$TARGET_DIR/interesting_configs.txt"
 
@@ -522,6 +677,7 @@ crawl_target() {
         grep -viE "(password['\"]?\s*[:=]\s*['\"]?['\"]?$)" "$TARGET_DIR/secrets_raw.txt" \
         | grep -viE "[:=][\"'\s]*(null|true|false|undefined|void|placeholder|example|xxxxxx)[\"'\s]*$" \
         | grep -viE "[\"'](text|password|email|number)[\"']" \
+        | clean_records \
         | sort -u \
         > "$TARGET_DIR/secrets.txt"
     else
@@ -778,6 +934,13 @@ crawl_target() {
 
     sort -u "$MASTER" -o "$MASTER"
 
+    awk -F'|' '
+    length($0) <= 5000
+    ' "$MASTER" > "$MASTER.tmp"
+
+    mv "$MASTER.tmp" "$MASTER"
+
+
     if [[ -n "$SCOPE_REGEX" ]]; then
 
         awk -F'|' -v scopes="$SCOPE_REGEX" '
@@ -789,21 +952,42 @@ crawl_target() {
                 host=url
                 sub(/^https?:\/\//,"",host)
                 sub(/\/.*/,"",host)
+                sub(/:.*/,"",host)
 
                 ok=0
 
                 n=split(scopes,a,"|")
-
+                
                 for(i=1;i<=n;i++) {
 
-                    if(
-                        tolower(host)==tolower(a[i]) ||
-                        tolower(host) ~ ("\\."tolower(a[i])"$")
-                    ){
+                    scope=tolower(a[i])
+
+                    # exact match
+    
+                    if (tolower(host)==scope) {
                         ok=1
                         break
                     }
+
+                    
+                    # IP prefix scope only
+                    if (scope ~ /^[0-9.]+$/ &&
+                        index(host, scope)==1) {
+                        ok=1
+                        break
+                    }
+
+
+
+                    suffix="." scope
+                    
+                    if (length(host) > length(suffix) && substr(tolower(host), length(host)-length(suffix)+1) == suffix) {
+                        ok=1
+                        break
+                    }
+
                 }
+
 
                 if(!ok)
                     next
