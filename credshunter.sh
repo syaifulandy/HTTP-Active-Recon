@@ -459,8 +459,12 @@ crawl_target() {
     | grep -vE '^/(html|head|body|div|span|form|table|tbody|thead|tr|td|th|script|style|label|button|h1|h2|h3|h4|h5|h6|p|strong|i|a|ul|ol|li|input|select|option|textarea|nav|footer|header|main|section|article)$' \
     | grep -vE '\.(png|jpg|css|svg)$' \
     | filter_exclude \
+    | grep -v '\\' \
     | sort -u \
-    > "$TARGET_DIR/endpoints.txt"
+    > "$TARGET_DIR/endpoints_raw.txt"
+
+    cp "$TARGET_DIR/endpoints_raw.txt" \
+       "$TARGET_DIR/endpoints.txt"
 
 
     rm -f "$TARGET_DIR/.ep1" "$TARGET_DIR/.ep2"
@@ -526,7 +530,7 @@ crawl_target() {
     # ✅ HIGH VALUE 🔥
     grep -Ei "create|update|delete|admin|login|auth|debug|api" \
     "$TARGET_DIR/endpoints.txt" \
-    > "$TARGET_DIR/highvalue.txt"
+    > "$TARGET_DIR/highvalue_endpoints.txt"
 
 
     # ✅ REQUEST LIST (BURP/FFUF READY) 🔥
@@ -660,7 +664,7 @@ crawl_target() {
     "$TARGET_DIR/configs_raw.txt" \
     | clean_records \
     | sort -u \
-    > "$TARGET_DIR/configs.txt"
+    > "$TARGET_DIR/configs_clean.txt"
 
 
 
@@ -669,7 +673,7 @@ crawl_target() {
     "$TARGET_DIR/configs_raw.txt" \
     | clean_records \
     | sort -u \
-    > "$TARGET_DIR/interesting_configs.txt"
+    > "$TARGET_DIR/configs_interesting.txt"
 
     # ─── 2. FILTERING UNTUK LAPORAN UTAMA (BERSIH & TAJAM) ─────────────────
     # Memisahkan data bersih ke file secrets.txt tanpa menghapus file RAW
@@ -771,7 +775,7 @@ crawl_target() {
     RAWRESP="$TARGET_DIR/responses_raw.csv"
     CLEANRESP="$TARGET_DIR/responses_clean.csv"
     ALIVE="$TARGET_DIR/alive_urls.txt"
-    INTERESTING="$TARGET_DIR/interesting.txt"
+    INTERESTING="$TARGET_DIR/response_findings.txt"
 
     > "$MASTER"
     > "$RAWRESP"
@@ -834,9 +838,9 @@ crawl_target() {
     fi
 
     # --------------------------------------------------
-    # highvalue.txt -> GET
+    # highvalue_endpoints.txt -> GET
     # --------------------------------------------------
-    if [[ -f "$TARGET_DIR/highvalue.txt" ]]; then
+    if [[ -f "$TARGET_DIR/highvalue_endpoints.txt" ]]; then
         while read -r ep; do
 
             [[ -z "$ep" ]] && continue
@@ -856,7 +860,7 @@ crawl_target() {
 
             echo "GET|$URLN"
 
-        done < "$TARGET_DIR/highvalue.txt" >> "$MASTER"
+        done < "$TARGET_DIR/highvalue_endpoints.txt" >> "$MASTER"
     fi
 
     # --------------------------------------------------
@@ -1224,12 +1228,12 @@ crawl_target() {
     echo "  URLs        : $(wc -l < "$TARGET_DIR/urls.txt" 2>/dev/null || echo 0)"
     echo "  params      : $(wc -l < "$TARGET_DIR/params.txt" 2>/dev/null || echo 0)"
     echo "  endpoints   : $(wc -l < "$TARGET_DIR/endpoints.txt" 2>/dev/null || echo 0)"
-    echo "  highvalue   : $(wc -l < "$TARGET_DIR/highvalue.txt" 2>/dev/null || echo 0)"
+    echo "  highvalue   : $(wc -l < "$TARGET_DIR/highvalue_endpoints.txt" 2>/dev/null || echo 0)"
     echo "  Profiles    : $STRUCT_COUNT JSON objects (High-Signal) 👤"
     echo "  Auth Maps   : $ROLE_COUNT JSON objects (Low-Signal/Roles) 🔑"
     echo "  secrets (HQ): $(wc -l < "$TARGET_DIR/secrets.txt" 2>/dev/null || echo 0)"
-    echo "  configs     : $(wc -l < "$TARGET_DIR/configs.txt" 2>/dev/null || echo 0)"
-    echo "  interesting : $(wc -l < "$TARGET_DIR/interesting_configs.txt" 2>/dev/null || echo 0)"
+    echo "  configs     : $(wc -l < "$TARGET_DIR/configs_clean.txt" 2>/dev/null || echo 0)"
+    echo "  configs(int): $(wc -l < "$TARGET_DIR/configs_interesting.txt" 2>/dev/null || echo 0)"
     echo "  secrets(RAW): $(wc -l < "$TARGET_DIR/secrets_raw.txt" 2>/dev/null || echo 0)"
     echo "  files       : $COUNT"
     echo "-----------------------------"
@@ -1437,7 +1441,7 @@ for d in "$OUTPUT_DIR"/*; do
   echo "<span class='badge $BADGE_CLASS'>Secrets: $SECRET_COUNT</span>" >> "$REPORT"
 
   echo "<h3>🔥 High Value</h3><pre>" >> "$REPORT"
-  head -n 20 "$d/highvalue.txt" 2>/dev/null >> "$REPORT"
+  head -n 20 "$d/highvalue_endpoints.txt" 2>/dev/null >> "$REPORT"
   echo "</pre>" >> "$REPORT"
 
   echo "<h3>🔑 Secrets</h3><pre>" >> "$REPORT"
