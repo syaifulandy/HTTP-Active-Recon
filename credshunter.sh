@@ -446,7 +446,30 @@ EOF
         CURL_AUTH_ARGS=(-H "Cookie: $COOKIE")
     fi
 
-    while read -r link; do
+
+    URL_COUNT=$(wc -l < "$TARGET_DIR/urls.txt")
+
+    if [[ "$URL_COUNT" -gt 8000 ]]; then
+
+        echo "[WARN] download inventory limited: $URL_COUNT -> 8000"
+
+        head -8000 "$TARGET_DIR/urls.txt" \
+        > "$TARGET_DIR/urls.tmp"
+
+        mv "$TARGET_DIR/urls.tmp" \
+           "$TARGET_DIR/urls.txt"
+    fi
+
+    TOTAL=$(wc -l < "$TARGET_DIR/urls.txt")
+    CURRENT=0
+
+    while read -r link; do        
+        ((CURRENT++))
+
+        if (( CURRENT % 100 == 0 )); then
+            echo "[DOWNLOAD] $CURRENT/$TOTAL"
+        fi
+
         echo "$link" | filter_exclude | grep -q . || continue
 
         [[ "$link" =~ \.(png|jpg|jpeg|gif|css|svg|woff|ico)$ ]] && continue
@@ -467,7 +490,7 @@ EOF
 
         SIZE=$(curl \
             "${CURL_AUTH_ARGS[@]}" \
-            -k -sIL "$link" |
+            -k --connect-timeout 2 --max-time 5 -sI "$link" |
             grep -i '^Content-Length:' |
             tail -1 |
             awk '{print $2}' |
@@ -483,11 +506,11 @@ EOF
         fi
 
         # ✅ Sisipkan ${CURL_AUTH_ARGS[@]} pada pengecekan status code
-        STATUS=$(curl "${CURL_AUTH_ARGS[@]}" -m 10 -s -o /dev/null -w "%{http_code}" "$link")
+        STATUS=$(curl "${CURL_AUTH_ARGS[@]}" --connect-timeout 2 --max-time 5 -s -o /dev/null -w "%{http_code}" "$link")
 
         if [[ "$STATUS" == "200" ]]; then
             # ✅ Sisipkan ${CURL_AUTH_ARGS[@]} pada proses download file
-            curl "${CURL_AUTH_ARGS[@]}" -s "$link" -o "$TARGET_DIR/files/$NAME$EXT"
+            curl "${CURL_AUTH_ARGS[@]}" --connect-timeout 2 --max-time 20 -s "$link" -o "$TARGET_DIR/files/$NAME$EXT"
             ((COUNT++))
         fi
 
