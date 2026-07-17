@@ -463,7 +463,18 @@ EOF
     TOTAL=$(wc -l < "$TARGET_DIR/urls.txt")
     CURRENT=0
 
+    DOWNLOAD_END=$(( $(date +%s) + 1800 ))
     while read -r link; do        
+
+        NOW=$(date +%s)
+
+        if (( NOW >= DOWNLOAD_END )); then
+            echo "[DOWNLOAD] timeout reached (30m)"
+            echo "[DOWNLOAD] processed $CURRENT/$TOTAL"
+            echo "[DOWNLOAD] downloaded $COUNT files"
+            break
+        fi
+
         ((CURRENT++))
 
         if (( CURRENT % 100 == 0 )); then
@@ -505,16 +516,29 @@ EOF
             continue
         fi
 
-        # ✅ Sisipkan ${CURL_AUTH_ARGS[@]} pada pengecekan status code
-        STATUS=$(curl "${CURL_AUTH_ARGS[@]}" --connect-timeout 2 --max-time 5 -s -o /dev/null -w "%{http_code}" "$link")
+        TMPFILE="$TARGET_DIR/files/$NAME$EXT"
+
+        STATUS=$(curl \
+            "${CURL_AUTH_ARGS[@]}" \
+            --connect-timeout 2 \
+            --max-time 20 \
+            -s \
+            -w "%{http_code}" \
+            -o "$TMPFILE" \
+            "$link")
 
         if [[ "$STATUS" == "200" ]]; then
-            # ✅ Sisipkan ${CURL_AUTH_ARGS[@]} pada proses download file
-            curl "${CURL_AUTH_ARGS[@]}" --connect-timeout 2 --max-time 20 -s "$link" -o "$TARGET_DIR/files/$NAME$EXT"
             ((COUNT++))
+        else
+            rm -f "$TMPFILE"
         fi
 
     done < "$TARGET_DIR/urls.txt"
+    
+    echo "[DOWNLOAD] finished"
+    echo "[DOWNLOAD] processed $CURRENT/$TOTAL"
+    echo "[DOWNLOAD] downloaded $COUNT files"
+
 
     # FORM ACTION DISCOVERY
     echo "[FORM] Extracting forms from downloaded files"
