@@ -163,6 +163,11 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+> "$OUTPUT_DIR/skipped_domains.txt"
+
+echo "[START] CREDS HUNTER"
+
+
 echo "[START] CREDS HUNTER"
 
 sanitize_filename() {
@@ -308,10 +313,38 @@ crawl_target() {
     # Alihkan variabel asal ke file final yang sudah bersih
     FILE="$FINAL_FILE"
 
-    # stop pipeline kalau katana output kosong
-    if [[ ! -s "$FILE" ]]; then
-        echo "[ERROR] Empty Katana output, skipping $DOMAIN"
-        return
+
+    MAX_KATANA_SIZE=$((100*1024*1024))
+
+    KATANA_SIZE=$(stat -c%s "$FILE" 2>/dev/null || echo 0)
+
+    if [[ "$KATANA_SIZE" -gt "$MAX_KATANA_SIZE" ]]; then
+
+        HUMAN_SIZE=$(du -h "$FILE" | awk '{print $1}')
+
+        echo "[WARN] huge katana output: $HUMAN_SIZE"
+        echo "$DOMAIN|KATANA_TOO_LARGE|$HUMAN_SIZE" \
+        >> "$OUTPUT_DIR/skipped_domains.txt"
+
+
+cat > "$TARGET_DIR/SKIPPED.txt" <<EOF
+        Domain     : $DOMAIN
+        Reason     : Katana output too large
+        Limit      : 100 MB
+        Actual     : $HUMAN_SIZE
+        File       : $FILE
+        Timestamp  : $(date)
+EOF
+
+            echo "[SKIP] $DOMAIN"
+            return
+        fi
+
+
+        # stop pipeline kalau katana output kosong
+        if [[ ! -s "$FILE" ]]; then
+            echo "[ERROR] Empty Katana output, skipping $DOMAIN"
+            return
     fi
     
     mkdir -p "$OUTPUT_DIR/$DOMAIN"
@@ -328,6 +361,64 @@ crawl_target() {
     scope_filter |
     filter_exclude \
     > "$TARGET_DIR/urls.txt"
+
+    # ==================================================
+    # URL SANITIZER
+    # ==================================================
+
+    # 1. normalisasi slash berlebih
+    awk '
+    {
+        split($0,a,"?")
+
+        base=a[1]
+        query=""
+
+        if(index($0,"?"))
+            query="?" substr($0,index($0,"?")+1)
+
+        gsub(/\/+/,"/",base)
+
+        sub("^http:/","http://",base)
+        sub("^https:/","https://",base)
+
+        print base query
+    }
+    ' "$TARGET_DIR/urls.txt" \
+    | sort -u \
+    > "$TARGET_DIR/urls.tmp"
+
+    mv "$TARGET_DIR/urls.tmp" \
+       "$TARGET_DIR/urls.txt"
+
+
+    # 2. buang JS template url
+    grep -vE "\+this\.|'\+" \
+    "$TARGET_DIR/urls.txt" \
+    > "$TARGET_DIR/urls.tmp"
+
+    mv "$TARGET_DIR/urls.tmp" \
+       "$TARGET_DIR/urls.txt"
+
+
+    # 3. buang path terlalu dalam
+    BEFORE=$(wc -l < "$TARGET_DIR/urls.txt")
+
+    awk -F'/' '
+    (NF-3) <= 15
+    ' "$TARGET_DIR/urls.txt" \
+    > "$TARGET_DIR/urls.tmp"
+
+    mv "$TARGET_DIR/urls.tmp" \
+       "$TARGET_DIR/urls.txt"
+
+    AFTER=$(wc -l < "$TARGET_DIR/urls.txt")
+
+    echo "[URL-FILTER] depth>15 removed $((BEFORE-AFTER)) urls"
+    echo "[URL-FILTER] remaining $(wc -l < "$TARGET_DIR/urls.txt") urls"
+
+    # ==================================================
+
 
     
     grep -E "\?.*=" "$TARGET_DIR/urls.txt" \
